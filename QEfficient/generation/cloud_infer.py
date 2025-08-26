@@ -8,6 +8,7 @@
 import importlib
 import platform
 import sys
+from functools import cached_property
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from warnings import warn
@@ -16,28 +17,21 @@ import numpy as np
 
 
 class QAICInferenceSession:
-    _qaicrt = None
-    _aicapi = None
-
-    @property
+    @cached_property
     def qaicrt(self):
-        if QAICInferenceSession._qaicrt is None:
-            try:
-                QAICInferenceSession._qaicrt = importlib.import_module("qaicrt")
-            except ImportError:
-                sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
-                QAICInferenceSession._qaicrt = importlib.import_module("qaicrt")
-        return QAICInferenceSession._qaicrt
+        try:
+            return importlib.import_module("qaicrt")
+        except ImportError:
+            sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
+            return importlib.import_module("qaicrt")
 
-    @property
+    @cached_property
     def aicapi(self):
-        if QAICInferenceSession._aicapi is None:
-            try:
-                QAICInferenceSession._aicapi = importlib.import_module("QAicApi_pb2")
-            except ImportError:
-                sys.path.append("/opt/qti-aic/dev/python")
-                QAICInferenceSession._aicapi = importlib.import_module("QAicApi_pb2")
-        return QAICInferenceSession._aicapi
+        try:
+            return importlib.import_module("QAicApi_pb2")
+        except ImportError:
+            sys.path.append("/opt/qti-aic/dev/python")
+            return importlib.import_module("QAicApi_pb2")
 
     def __init__(
         self,
@@ -48,15 +42,14 @@ class QAICInferenceSession:
     ):
         """
         Initialise for QAIC inference Session
-        ---------
 
-        :qpc_path: str. Path to the save generated binary file after compilation.
-        :device_ids: List[int]. Device Ids to be used for compilation. if devices > 1, it enables multiple card setup.
-        :activate: bool. If false, activation will be disabled. Default=True.
-        :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
+        :param qpc_path: Path to the saved compiled QPC binary.
+        :param device_ids: Device IDs to be used; if > 1, enables multi-card setup.
+        :param activate: If False, activation will be skipped. Default=True.
+        :param enable_debug_logs: If True, enable debug logs. Default=False.
         """
 
-        # Build the dtype map one time, not on every property access
+        # Build dtype mapping once (depends on self.aicapi constants)
         self.aic_to_np_dtype_mapping = {
             self.aicapi.FLOAT_TYPE: np.dtype(np.float32),
             self.aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
@@ -68,7 +61,6 @@ class QAICInferenceSession:
             self.aicapi.INT64_I_TYPE: np.dtype(np.int64),
             self.aicapi.INT8_TYPE: np.dtype(np.int8),
         }
-
         # Load QPC
         if device_ids is not None:
             devices = self.qaicrt.QIDList(device_ids)
