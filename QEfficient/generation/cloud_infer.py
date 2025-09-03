@@ -8,30 +8,32 @@
 import importlib
 import platform
 import sys
-from functools import cached_property
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-from warnings import warn
-
+from warnings import warn 
 import numpy as np
 
+try:
+    import qaicrt
+    is_qaicrt_imported = True
+except ImportError:
+    try:
+        sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
+        import qaicrt
+        is_qaicrt_imported = True
+    except ImportError:
+        is_qaicrt_imported = False
+
+try:
+    import QAicApi_pb2 as aicapi
+except ImportError:
+    try:
+        sys.path.append("/opt/qti-aic/dev/python")
+        import QAicApi_pb2 as aicapi
+    except ImportError:
+        is_aicapi_imported = False
 
 class QAICInferenceSession:
-    @cached_property
-    def qaicrt(self):
-        try:
-            return importlib.import_module("qaicrt")
-        except ImportError:
-            sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
-            return importlib.import_module("qaicrt")
-
-    @cached_property
-    def aicapi(self):
-        try:
-            return importlib.import_module("QAicApi_pb2")
-        except ImportError:
-            sys.path.append("/opt/qti-aic/dev/python")
-            return importlib.import_module("QAicApi_pb2")
 
     def __init__(
         self,
@@ -48,38 +50,41 @@ class QAICInferenceSession:
         :param activate: If False, activation will be skipped. Default=True.
         :param enable_debug_logs: If True, enable debug logs. Default=False.
         """
-
-        # Build dtype mapping once (depends on self.aicapi constants)
+        if not is_qaicrt_imported and not is_aicapi_imported:
+            raise ImportError(
+                "QAIC runtime not available. Please install QAIC SDK"
+            )
+        # Build dtype mapping once (depends on aicapi constants)
         self.aic_to_np_dtype_mapping = {
-            self.aicapi.FLOAT_TYPE: np.dtype(np.float32),
-            self.aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
-            self.aicapi.INT8_Q_TYPE: np.dtype(np.int8),
-            self.aicapi.UINT8_Q_TYPE: np.dtype(np.uint8),
-            self.aicapi.INT16_Q_TYPE: np.dtype(np.int16),
-            self.aicapi.INT32_Q_TYPE: np.dtype(np.int32),
-            self.aicapi.INT32_I_TYPE: np.dtype(np.int32),
-            self.aicapi.INT64_I_TYPE: np.dtype(np.int64),
-            self.aicapi.INT8_TYPE: np.dtype(np.int8),
+            aicapi.FLOAT_TYPE: np.dtype(np.float32),
+            aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
+            aicapi.INT8_Q_TYPE: np.dtype(np.int8),
+            aicapi.UINT8_Q_TYPE: np.dtype(np.uint8),
+            aicapi.INT16_Q_TYPE: np.dtype(np.int16),
+            aicapi.INT32_Q_TYPE: np.dtype(np.int32),
+            aicapi.INT32_I_TYPE: np.dtype(np.int32),
+            aicapi.INT64_I_TYPE: np.dtype(np.int64),
+            aicapi.INT8_TYPE: np.dtype(np.int8),
         }
         # Load QPC
         if device_ids is not None:
-            devices = self.qaicrt.QIDList(device_ids)
-            self.context = self.qaicrt.Context(devices)
-            self.queue = self.qaicrt.Queue(self.context, device_ids[0])
+            devices = qaicrt.QIDList(device_ids)
+            self.context = qaicrt.Context(devices)
+            self.queue = qaicrt.Queue(self.context, device_ids[0])
         else:
-            self.context = self.qaicrt.Context()
-            self.queue = self.qaicrt.Queue(self.context, 0)  # Async API
+            self.context = qaicrt.Context()
+            self.queue = qaicrt.Queue(self.context, 0)  # Async API
 
         if enable_debug_logs:
-            if self.context.setLogLevel(self.qaicrt.QLogLevel.QL_DEBUG) != self.qaicrt.QStatus.QS_SUCCESS:
+            if self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) != qaicrt.QStatus.QS_SUCCESS:
                 raise RuntimeError("Failed to setLogLevel")
 
-        qpc = self.qaicrt.Qpc(str(qpc_path))
+        qpc = qaicrt.Qpc(str(qpc_path))
 
         # Load IO Descriptor
-        iodesc = self.aicapi.IoDesc()
+        iodesc = aicapi.IoDesc()
         status, iodesc_data = qpc.getIoDescriptor()
-        if status != self.qaicrt.QStatus.QS_SUCCESS:
+        if status != qaicrt.QStatus.QS_SUCCESS:
             raise RuntimeError("Failed to getIoDescriptor")
         iodesc.ParseFromString(bytes(iodesc_data))
 
@@ -91,37 +96,37 @@ class QAICInferenceSession:
         self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
 
         # Create and load Program
-        prog_properties = self.qaicrt.QAicProgramProperties()
+        prog_properties = qaicrt.QAicProgramProperties()
         prog_properties.SubmitRetryTimeoutMs = 60_000
         if device_ids and len(device_ids) > 1:
             prog_properties.devMapping = ":".join(map(str, device_ids))
 
-        self.program = self.qaicrt.Program(self.context, None, qpc, prog_properties)
-        if self.program.load() != self.qaicrt.QStatus.QS_SUCCESS:
+        self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
+        if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
             raise RuntimeError("Failed to load program")
 
         if activate:
             self.activate()
 
         # Create input qbuffers and buf_dims
-        self.qbuffers = [self.qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
-        self.buf_dims = self.qaicrt.BufferDimensionsVecRef(
+        self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
+        self.buf_dims = qaicrt.BufferDimensionsVecRef(
             [(self.aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
         )
 
     @property
     def input_names(self) -> List[str]:
-        return [binding.name for binding in self.bindings if binding.dir == self.aicapi.BUFFER_IO_TYPE_INPUT]
+        return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_INPUT]
 
     @property
     def output_names(self) -> List[str]:
-        return [binding.name for binding in self.bindings if binding.dir == self.aicapi.BUFFER_IO_TYPE_OUTPUT]
+        return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_OUTPUT]
 
     def activate(self):
         """Activate qpc"""
 
         self.program.activate()
-        self.execObj = self.qaicrt.ExecObj(self.context, self.program)
+        self.execObj = qaicrt.ExecObj(self.context, self.program)
 
     def deactivate(self):
         """Deactivate qpc"""
@@ -142,7 +147,7 @@ class QAICInferenceSession:
                 warn(f'Buffer: "{buffer_name}" not found')
                 continue
             buffer_index = self.binding_index_map[buffer_name]
-            self.qbuffers[buffer_index] = self.qaicrt.QBuffer(buffer.tobytes())
+            self.qbuffers[buffer_index] = qaicrt.QBuffer(buffer.tobytes())
             self.buf_dims[buffer_index] = (
                 buffer.itemsize,
                 buffer.shape if len(buffer.shape) > 0 else (1,),
@@ -170,13 +175,13 @@ class QAICInferenceSession:
         """
 
         self.set_buffers(inputs)
-        if self.execObj.setData(self.qbuffers, self.buf_dims) != self.qaicrt.QStatus.QS_SUCCESS:
+        if self.execObj.setData(self.qbuffers, self.buf_dims) != qaicrt.QStatus.QS_SUCCESS:
             raise MemoryError("Failed to setData")
 
-        if self.queue.enqueue(self.execObj) != self.qaicrt.QStatus.QS_SUCCESS:
+        if self.queue.enqueue(self.execObj) != qaicrt.QStatus.QS_SUCCESS:
             raise MemoryError("Failed to enqueue")
 
-        if self.execObj.waitForCompletion() != self.qaicrt.QStatus.QS_SUCCESS:
+        if self.execObj.waitForCompletion() != qaicrt.QStatus.QS_SUCCESS:
             error_message = "Failed to run"
 
             if self.allowed_shapes:
@@ -200,7 +205,7 @@ class QAICInferenceSession:
             raise ValueError(error_message)
 
         status, output_qbuffers = self.execObj.getData()
-        if status != self.qaicrt.QStatus.QS_SUCCESS:
+        if status != qaicrt.QStatus.QS_SUCCESS:
             raise MemoryError("Failed to getData")
 
         outputs = {}
