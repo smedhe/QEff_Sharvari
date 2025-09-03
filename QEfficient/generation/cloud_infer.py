@@ -5,21 +5,23 @@
 #
 # -----------------------------------------------------------------------------
 
-import importlib
 import platform
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-from warnings import warn 
+from warnings import warn
+
 import numpy as np
 
 try:
     import qaicrt
+
     is_qaicrt_imported = True
 except ImportError:
     try:
         sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
         import qaicrt
+
         is_qaicrt_imported = True
     except ImportError:
         is_qaicrt_imported = False
@@ -33,8 +35,8 @@ except ImportError:
     except ImportError:
         is_aicapi_imported = False
 
-class QAICInferenceSession:
 
+class QAICInferenceSession:
     def __init__(
         self,
         qpc_path: Union[Path, str],
@@ -51,9 +53,7 @@ class QAICInferenceSession:
         :param enable_debug_logs: If True, enable debug logs. Default=False.
         """
         if not is_qaicrt_imported and not is_aicapi_imported:
-            raise ImportError(
-                "QAIC runtime not available. Please install QAIC SDK"
-            )
+            raise ImportError("QAIC runtime not available. Please install QAIC SDK")
         # Build dtype mapping once (depends on aicapi constants)
         self.aic_to_np_dtype_mapping = {
             aicapi.FLOAT_TYPE: np.dtype(np.float32),
