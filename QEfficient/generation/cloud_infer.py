@@ -28,12 +28,16 @@ except ImportError:
 
 try:
     import QAicApi_pb2 as aicapi
+
+    is_aicapi_imported = True
 except ImportError:
     try:
         sys.path.append("/opt/qti-aic/dev/python")
         import QAicApi_pb2 as aicapi
+
+        is_aicapi_imported = True
     except ImportError:
-        is_aicapi_imported = False
+        is_qaicrt_imported = False
 
 
 class QAICInferenceSession:
@@ -52,7 +56,7 @@ class QAICInferenceSession:
         :param activate: If False, activation will be skipped. Default=True.
         :param enable_debug_logs: If True, enable debug logs. Default=False.
         """
-        if not is_qaicrt_imported and not is_aicapi_imported:
+        if not (is_qaicrt_imported and is_aicapi_imported):
             raise ImportError("QAIC runtime not available. Please install QAIC SDK")
         # Build dtype mapping once (depends on aicapi constants)
         self.aic_to_np_dtype_mapping = {
