@@ -57,7 +57,11 @@ class QAICInferenceSession:
         :param enable_debug_logs: If True, enable debug logs. Default=False.
         """
         if not (is_qaicrt_imported and is_aicapi_imported):
-            raise ImportError("QAIC runtime not available. Please install QAIC SDK")
+            raise ImportError(
+                "Unable to import `qaicrt` and/or `QAicApi_pb2` libraries required for executing QPC files on the CLOUD AI platform.\n"
+                "Please ensure that the QAIC platform SDK and apps SDK are installed correctly."
+            )
+
         # Build dtype mapping once (depends on aicapi constants)
         self.aic_to_np_dtype_mapping = {
             aicapi.FLOAT_TYPE: np.dtype(np.float32),
