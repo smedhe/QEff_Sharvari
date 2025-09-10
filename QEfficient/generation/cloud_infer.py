@@ -181,17 +181,19 @@ class QAICInferenceSession:
         Return:
             :Dict[str, np.ndarray]:
         """
-
+        # Set inputs
         self.set_buffers(inputs)
         if self.execObj.setData(self.qbuffers, self.buf_dims) != qaicrt.QStatus.QS_SUCCESS:
             raise MemoryError("Failed to setData")
-
+        # # Run with sync API
+        # if self.execObj.run(self.qbuffers) != qaicrt.QStatus.QS_SUCCESS:
+        # Run with async API
         if self.queue.enqueue(self.execObj) != qaicrt.QStatus.QS_SUCCESS:
             raise MemoryError("Failed to enqueue")
 
         if self.execObj.waitForCompletion() != qaicrt.QStatus.QS_SUCCESS:
             error_message = "Failed to run"
-
+            # Print additional error messages for unmatched dimension error
             if self.allowed_shapes:
                 error_message += "\n\n(Only if 'No matching dimension found' error is present above)"
                 error_message += "\nAllowed shapes:"
@@ -211,11 +213,11 @@ class QAICInferenceSession:
                         continue
                     error_message += f"{binding.name}:\t{elemsize}\t{shape}\n"
             raise ValueError(error_message)
-
+        # Get output buffers
         status, output_qbuffers = self.execObj.getData()
         if status != qaicrt.QStatus.QS_SUCCESS:
             raise MemoryError("Failed to getData")
-
+        # Build output
         outputs = {}
         for output_name in self.output_names:
             buffer_index = self.binding_index_map[output_name]
