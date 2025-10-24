@@ -14,14 +14,15 @@ import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
-
+import time
 import onnx
 import torch
-
+import os
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import (
     constants,
     create_json,
@@ -31,10 +32,12 @@ from QEfficient.utils import (
     generate_mdp_partition_config,
     hash_dict_params,
     load_json,
+    torch_export_utils
 )
 
 logger = logging.getLogger(__name__)
 
+from ram_usage.profiler import QEffMemoryProfiler
 
 class QEFFBaseModel(ABC):
     """
@@ -162,7 +165,7 @@ class QEFFBaseModel(ABC):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-
+    #=============================CHANGES_FOR_TORCH.EXPORT==========================================================
     @export_wrapper
     def _export(
         self,
@@ -173,45 +176,64 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
+        use_torch_export: bool = False,
+        dynamic_shapes: Optional[Dict[str, Dict[int, any]]] = None,
     ) -> str:
         """
-        Export the PyTorch model to ONNX and apply ONNX transforms
-
+        Export the PyTorch model to ONNX or FX Graph and apply transforms
+ 
         This method:
-        1. Exports PyTorch model to ONNX using torch.onnx.export
+        1. Exports PyTorch model using torch.onnx.export or torch.export.export
         2. Clears PyTorch weights after export
-        3. Applies ONNX transforms with reduced memory footprint
-
+        3. Applies transforms with reduced memory footprint
+ 
         Args:
             :example_inputs (dict): Sample inputs to trace the model.
             :output_names (list): names to assign to the output nodes of the graph, in order.
-            :dynamic_axes (dict): Same as dynamic_axes parameter to be passed to `torch.onnx.export`.
-            :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
+            :dynamic_axes (dict): dynamic_axes for ONNX or dynamic_shapes for torch.export.
+            :export_kwargs (dict): Additional arguments to be passed to export function.
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
             :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device
             after successful export to reduce memory usage. Set to False if you need to
             keep weights for further operations. Defaults to True.
+            :use_torch_export (bool): If True, use torch.export.export; if False, use torch.onnx.export.
             Note:
             Once weights are offloaded, the model cannot be re-exported. Create a new
             instance using from_pretrained() for re-export.
-
+ 
         """
-        onnx_path = export_dir / f"{self.model_name}.onnx"
-
-        # Return early if ONNX already exists
-        if onnx_path.is_file():
-            self.onnx_path = onnx_path
-            return onnx_path
-
+        if use_torch_export:
+            # Use torch.export path with .pt2 extension
+            export_path = export_dir / f"{self.model_name}.pt2"
+            export_format = "FX"
+        else:
+            # Use torch.onnx.export path
+            export_path = export_dir / f"{self.model_name}.onnx"
+            export_format = "ONNX"
+ 
+        # Return early if export already exists
+        if export_path.is_file():
+            if use_torch_export:
+                self.fx_path = export_path
+            else:
+                self.onnx_path = export_path
+            return export_path
+ 
+        import inspect  # Import at function start
+        
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
-
+ 
         # Setup temporary paths
-        tmp_onnx_dir = export_dir / "onnx_tmp"
-        tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
-        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
-
+        if use_torch_export:
+            tmp_export_dir = export_dir / "fx_tmp"
+            tmp_export_path = tmp_export_dir / f"{self.model_name}.pt2"
+        else:
+            tmp_export_dir = export_dir / "onnx_tmp"
+            tmp_export_path = tmp_export_dir / f"{self.model_name}.onnx"
+        tmp_export_dir.mkdir(parents=True, exist_ok=True)
+ 
         # Create input_names from example_inputs
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
@@ -236,51 +258,141 @@ class QEFFBaseModel(ABC):
                 else:
                     input_names.append(param)
 
+        profiler = QEffMemoryProfiler(sampling_interval=0.05, verbose=True)
+        profiler.start_monitoring()
+
+        metrics: Dict[str, float] = {}
+ 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
-            torch.onnx.export(
-                self.model,
-                (example_inputs,),
-                str(tmp_onnx_path),
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
-            logger.info("PyTorch export successful")
+            #===============================MAIN_CHANGES=============================================
+            if use_torch_export: 
+                #used for debugging for dynamo export
+                # explanation = torch._dynamo.explain(self.model)(**example_inputs)
+                # print(explanation)
+                # Setup torch.export environment - adding some flags specific to torch._dynamo
+                from QEfficient.utils.torch_export_utils import setup_torch_export_environment
+                setup_torch_export_environment()
 
-            _ = self._offload_model_weights(offload_pt_weights)
+                if profiler:
+                    profiler.mark_operation("torch.export (in memory)")
 
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
-            transform_kwargs = {
-                "onnx_base_dir": str(tmp_onnx_dir),
-                "model_name": self.model_name,
-            }
-            if onnx_transform_kwargs is not None:
-                transform_kwargs.update(onnx_transform_kwargs)
+                t0 = time.perf_counter()                
+                fx_graph = torch.export.export(
+                    self.model,
+                    args=(),
+                    kwargs=example_inputs, #IMPORTANT CHANGE: passing all inputs in kwargs rather than as a rigid tuple in args
+                    dynamic_shapes=dynamic_shapes,
+                    **export_kwargs,
+                    strict=True,
+                )
+                t1 = time.perf_counter()
+                metrics["torch_export_in_mem"] = t1 - t0
+                print("torch_export_in_mem", t1-t0)
 
-            for transform in self._onnx_transforms:
-                model, transformed = transform.apply(model, **transform_kwargs)
+                if profiler:
+                    profiler.mark_operation("torch export save")
+                t2=time.perf_counter()
+                torch.export.save(fx_graph, export_path)
+                t3=time.perf_counter()
+                metrics["torch_export_save"] = t3 - t2
+                print("torch_export_save", t3-t2)
 
-            model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
-            )
-            logger.info("ONNX transforms applied")
+                if profiler:
+                    profiler.mark_operation("torch.export load")
 
-            onnx.save(model, onnx_path)
-            logger.info("Transformed ONNX saved")
+                t4= time.perf_counter()
+                _ = torch.export.load(export_path)
+                t5 = time.perf_counter()
+                metrics["torch_export_load"] = t5 - t4
+                print("torch_export_load", t5-t4)
 
+                self.fx_path = export_path
+                _ = self._offload_model_weights(offload_pt_weights)
+
+                try:
+                    metrics["fx_file_size_mb"] = round(os.path.getsize(export_path)/(1024*1024),3)
+                except OSError:
+                    metrics["fx_file_size_mb"] = 0.0
+                
+            else:
+                # Use torch.onnx.export (existing path)
+                if profiler:
+                    profiler.mark_operation("ONNX Export")
+                t0 = time.perf_counter()
+                torch.onnx.export(
+                    self.model,
+                    (example_inputs,),
+                    str(tmp_export_path),
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
+                t1 = time.perf_counter()
+                metrics["onnx_export"] = t1 - t0
+                logger.info("PyTorch ONNX export successful")
+ 
+                _ = self._offload_model_weights(offload_pt_weights)
+                if profiler:
+                    profiler.mark_operation("ONNX Load")
+                t2 = time.perf_counter()
+                model = onnx.load(tmp_export_path, load_external_data=False)
+                t3 = time.perf_counter()
+                metrics["onnx_load"] =  t3 - t2
+                transform_kwargs = {
+                    "onnx_base_dir": str(tmp_export_dir),
+                    "model_name": self.model_name,
+                }
+                if onnx_transform_kwargs is not None:
+                    transform_kwargs.update(onnx_transform_kwargs)
+
+                if profiler:
+                    profiler.mark_operation("ONNX Transform")
+                t4 = time.perf_counter()
+                for transform in self._onnx_transforms:
+                    model, transformed = transform.apply(model, **transform_kwargs)
+                t5 = time.perf_counter()
+                metrics["onnx_transforms"] = t4 - t5
+
+ 
+                model.metadata_props.append(
+                    onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
+                )
+                logger.info("ONNX transforms applied")
+                if profiler:
+                    profiler.mark_operation("ONNX Transformed Save")
+                t6 = time.perf_counter()
+                onnx.save(model, export_path)
+                t7 = time.perf_counter()
+                metrics["onnx_transformed_save"] = t7 - t6
+                logger.info("Transformed ONNX saved")
+                
+                self.onnx_path = export_path
+
+                try:
+                    metrics["onnx_file_size_mb"] = round(os.path.getsize(export_path) / (1024*1024), 3)
+                except OSError:
+                    metrics["onnx_file_size_mb"] = 0.0
+ 
         except Exception as e:
-            logger.error(f"ONNX export or transforms failed: {e}")
+            logger.error(f"{export_format} export or transforms failed: {e}")
             raise e
-
+ 
         finally:
-            shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
+            profiler.stop_monitoring()
+            metrics["peak_rss_mb"] = getattr(profiler, "peak_rss", None) or 0.0
 
-        self.onnx_path = onnx_path
-        return onnx_path
+            shutil.rmtree(tmp_export_dir, ignore_errors=True)
 
+            if metrics:
+                metrics_path = export_dir/"export_mterics.json"
+                create_json(metrics_path, metrics)
+ 
+        return export_path
+    #=============================CHANGES_FOR_TORCH.EXPORT==========================================================
+ 
     @dump_qconfig
     def _compile(
         self,

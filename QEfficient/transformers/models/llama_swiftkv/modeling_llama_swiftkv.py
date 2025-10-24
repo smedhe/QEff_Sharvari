@@ -97,7 +97,6 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         query = self.q_proj_swiftkv(hidden_states)
         # Reshape the query, key, and value tensors.
         query_states = query.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-
         kv_seq_len = position_ids.shape[-1]
         if past_key_value is not None:
             if self.layer_idx is None:

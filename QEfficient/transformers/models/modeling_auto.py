@@ -57,6 +57,185 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.logging_utils import logger
 
+def convert_dynamic_axes_to_dynamic_shapes(dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
+    """
+    Convert ONNX dynamic_axes format to torch.export dynamic_shapes format
+    
+    Args:
+        dynamic_axes: ONNX format like {"input_ids": {0: "batch_size", 1: "seq_len"}}
+    
+    Returns:
+        dynamic_shapes: torch.export format with Dim objects matching model forward args
+    """
+    from torch.export import Dim
+    
+    # Create dimension registry to reuse Dim objects with same names
+    dim_registry = {}
+    dynamic_shapes = {}
+    
+    # Handle regular model inputs (not past_key_values)
+    # These match the QEffLlamaForCausalLM forward signature:
+    # input_ids, attention_mask, position_ids, past_key_values, batch_index, etc.
+    for input_name, axes_map in dynamic_axes.items():
+        if not input_name.startswith("past_"):
+            input_dynamic_shapes = {}
+            for axis_idx, dim_name in axes_map.items():
+                # Create or reuse Dim object for this dimension name
+                if dim_name not in dim_registry:
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)  # Support realistic batch sizes
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Conservative seq range
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Generic conservative range
+                
+                input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            
+            dynamic_shapes[input_name] = input_dynamic_shapes
+    
+    # Handle past_key_values specially - collect all past_key.X and past_value.X
+    past_keys = {}
+    past_values = {}
+    
+    for input_name, axes_map in dynamic_axes.items():
+        if input_name.startswith("past_key."):
+            layer_idx = int(input_name.split(".")[1])
+            layer_dynamic_shapes = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    # Create Dim with conservative constraints to avoid conflicts
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)  # Support realistic batch sizes
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Conservative seq range
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Generic conservative range
+                layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            past_keys[layer_idx] = layer_dynamic_shapes
+            
+        elif input_name.startswith("past_value."):
+            layer_idx = int(input_name.split(".")[1])
+            layer_dynamic_shapes = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    # Create Dim with conservative constraints to avoid conflicts
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)  # Support realistic batch sizes
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Conservative seq range
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)  # Generic conservative range
+                layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            past_values[layer_idx] = layer_dynamic_shapes
+    
+    # Reconstruct past_key_values as nested structure if we have past keys/values
+    if past_keys or past_values:
+        max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+        past_kv_shapes = []
+        
+        for layer_idx in range(max_layer + 1):
+            layer_shapes = []
+            if layer_idx in past_keys:
+                layer_shapes.append(past_keys[layer_idx])
+            else:
+                layer_shapes.append({})
+                
+            if layer_idx in past_values:
+                layer_shapes.append(past_values[layer_idx])
+            else:
+                layer_shapes.append({})
+                
+            past_kv_shapes.append(layer_shapes)
+        
+        dynamic_shapes["past_key_values"] = past_kv_shapes
+    
+    return dynamic_shapes
+
+
+def convert_dynamic_axes_to_dynamic_shapes_auto_model(dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
+    from torch.export import Dim
+    dim_registry: Dict[str, any] = {}
+    dynamic_shapes: Dict[str, Dict[int, any]] = {}
+    for input_name, axes_map in dynamic_axes.items():
+        input_dynamic_shapes: Dict[int, any] = {}
+        for axis_idx, dim_name in axes_map.items():
+            if dim_name not in dim_registry:
+                if dim_name == "batch_size":
+                    dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                elif "seq_len" in dim_name:
+                    dim_registry[dim_name] = Dim(dim_name, min=1, max=4096) 
+                else:
+                    dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+            input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+        dynamic_shapes[input_name] = input_dynamic_shapes
+    return dynamic_shapes
+ 
+ 
+def convert_dynamic_axes_to_dynamic_shapes_image_text_to_text(dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
+    from torch.export import Dim
+    dim_registry: Dict[str, any] = {}
+    dynamic_shapes: Dict[str, Dict[int, any]] = {}
+ 
+    for input_name, axes_map in dynamic_axes.items():
+        if not input_name.startswith("past_"):
+            input_dynamic_shapes: Dict[int, any] = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+                    elif "img_size" in dim_name or "image" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=224, max=1024)
+                    elif "num_images" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=16)
+                    elif "img_tiles" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+                input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            dynamic_shapes[input_name] = input_dynamic_shapes
+ 
+    # past key/values if present
+    past_keys: Dict[int, Dict[int, any]] = {}
+    past_values: Dict[int, Dict[int, any]] = {}
+    for input_name, axes_map in dynamic_axes.items():
+        if input_name.startswith("past_key."):
+            layer_idx = int(input_name.split(".")[1])
+            layer_dynamic_shapes: Dict[int, any] = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+                layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            past_keys[layer_idx] = layer_dynamic_shapes
+        elif input_name.startswith("past_value."):
+            layer_idx = int(input_name.split(".")[1])
+            layer_dynamic_shapes = {}
+            for axis_idx, dim_name in axes_map.items():
+                if dim_name not in dim_registry:
+                    if dim_name == "batch_size":
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                    elif "seq_len" in dim_name:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+                    else:
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
+                layer_dynamic_shapes[axis_idx] = dim_registry[dim_name]
+            past_values[layer_idx] = layer_dynamic_shapes
+ 
+    if past_keys or past_values:
+        max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+        past_kv_shapes: List[List[Dict[int, any]]] = []
+        for layer_idx in range(max_layer + 1):
+            past_kv_shapes.append([past_keys.get(layer_idx, {}), past_values.get(layer_idx, {})])
+        dynamic_shapes["past_key_values"] = past_kv_shapes
+    return dynamic_shapes
+ 
+ 
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -235,31 +414,37 @@ class QEFFAutoModel(QEFFTransformersBase):
     def export(self, export_dir: Optional[str] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-
+ 
         ``Optional`` Args:
            :export_dir (str, optional): The directory path to store ONNX-graph.
-
+ 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-
+ 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
         }
-
+ 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
-
+ 
         output_names = ["output"]
-
-        return self._export(
-            example_inputs,
-            output_names,
-            dynamic_axes,
-            export_dir=export_dir,
-        )
+ 
+        if constants.USE_TORCH_EXPORT:
+            dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes_auto_model(dynamic_axes)
+            return self._export(
+                example_inputs,
+                output_names,
+                dynamic_axes,
+                export_dir=export_dir,
+                use_torch_export=True,
+                dynamic_shapes=dynamic_shapes,
+            )
+        else:
+            return self._export(example_inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
@@ -287,12 +472,20 @@ class QEFFAutoModel(QEFFTransformersBase):
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :compiler_options (dict, optional): Additional compiler options.
+
                 For QAIC Compiler: Extra arguments for qaic-exec can be passed.
                     :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
                     :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+
+                    Params are converted to flags as below:
+
+                    - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                    - aic_hw_version=ai200 -> -aic-hw-version=ai200
+
                 For QNN Compiler: Following arguments can be passed.
                     :enable_qnn (bool): Enables QNN Compilation.
                     :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
@@ -434,7 +627,13 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
-        return self._export(
+        if constants.USE_TORCH_EXPORT:
+            dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes_image_text_to_text(dynamic_axes)
+            return self._export(
+            inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights, use_torch_export=True,dynamic_shapes=dynamic_shapes,
+        )
+        else:
+            return self._export(
             inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
         )
 
@@ -491,7 +690,13 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
-        return self._export(
+        if constants.USE_TORCH_EXPORT:
+            dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes_image_text_to_text(dynamic_axes)
+            return self._export(
+            inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights, use_torch_export=True,dynamic_shapes=dynamic_shapes,
+        )
+        else:
+            return self._export(
             inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
         )
 
@@ -949,7 +1154,15 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        if constants.USE_TORCH_EXPORT:
+            dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes_image_text_to_text(dynamic_axes)
+            return self._export(
+            inputs, output_names, dynamic_axes, export_dir=export_dir, use_torch_export=True,dynamic_shapes=dynamic_shapes,
+        )
+        else:
+            return self._export(
+            inputs, output_names, dynamic_axes, export_dir=export_dir, 
+        )
 
     def compile(
         self,
@@ -1357,7 +1570,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
-        super().__init__(model, **kwargs)
+        super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
@@ -1371,6 +1584,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
         self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
+        # TODO : Update in qaic_config isn't updated in the hash due to SpDTransforms. Need to move
+        # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
@@ -1470,10 +1685,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     def export(self, export_dir: Optional[str] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-
+ 
         ``Optional`` Args:
             :export_dir (str, optional): The directory path to store ONNX-graph.
-
+ 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
@@ -1492,6 +1707,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
+
+        #Adding Attention Mask as an input for torch.export(ideally we should do the following but getting some shape related)
+        # if constants.USE_TORCH_EXPORT:
+        #     example_inputs["attention_mask"] = torch.ones((bs, seq_len), dtype=torch.int64)
+        #     dynamic_axes["attention_mask"] = {0: "batch_size", 1: "seq_len"}
+            
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
             pkv_dynamic_axes = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
@@ -1509,7 +1730,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names.append("next_tokens")
         else:
             output_names.append("logits")
-
+ 
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
         if (
             hasattr(self.model.config, "model_type")
@@ -1523,37 +1744,52 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
-
+ 
         else:
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
-
+ 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
             dynamic_axes["batch_index"] = {0: "batch_size"}
-
+ 
         if self.is_tlm:
             nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
             example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
-
+ 
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
             example_inputs, output_names, dynamic_axes = self.get_sampling_inputs_and_outputs(
                 example_inputs=example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
             )
-
-        return self._export(
-            example_inputs,
-            output_names,
-            dynamic_axes,
-            export_dir=export_dir,
-        )
-
+        #==========================MAIN_CHANGES===============================================
+        # Check if we should use torch.export or torch.onnx.export
+        if constants.USE_TORCH_EXPORT:
+            # Convert dynamic_axes to dynamic_shapes for torch.export
+            dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
+            return self._export(
+                example_inputs,
+                output_names,
+                dynamic_axes,  # Keep dynamic_axes for hashing
+                export_dir=export_dir,
+                use_torch_export=True,  # Flag to indicate torch.export usage
+                dynamic_shapes=dynamic_shapes,  # Pass dynamic_shapes separately
+            )
+        else:
+            # Use existing ONNX export pipeline
+            return self._export(
+                example_inputs,
+                output_names,
+                dynamic_axes,
+                export_dir=export_dir,
+                use_torch_export=False,  # Flag to indicate ONNX export usage
+            )
+ 
     def get_sampling_inputs_and_outputs(
         self,
         example_inputs: Dict[str, torch.Tensor],
@@ -1566,12 +1802,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-
+ 
         example_inputs["last_accepted_output_tokens"] = torch.zeros(
             (bs, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN), dtype=torch.int64
         )
         dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
-
+ 
         example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
             (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool
         )
@@ -1579,12 +1815,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             0: "full_batch_size" if self.continuous_batching else "batch_size",
         }
         output_names.append("past_repetition_penalty_buffer_RetainedState")
-
+ 
         example_inputs["repetition_penalties"] = (
             torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_REPETITION_PENALTIES
         )
         dynamic_axes["repetition_penalties"] = {0: "batch_size"}
-
+ 
         example_inputs["past_presence_penalty_buffer"] = torch.zeros(
             (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool
         )
@@ -1592,32 +1828,32 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             0: "full_batch_size" if self.continuous_batching else "batch_size",
         }
         output_names.append("past_presence_penalty_buffer_RetainedState")
-
+ 
         example_inputs["presence_penalties"] = (
             torch.zeros((bs, 1), dtype=torch.float) + constants.ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES
         )
         dynamic_axes["presence_penalties"] = {0: "batch_size"}
-
+ 
         example_inputs["temperatures"] = (
             torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TEMPERATURES
         )
         dynamic_axes["temperatures"] = {0: "batch_size"}
-
+ 
         max_top_k_ids = self.model.qaic_config.get("max_top_k_ids", constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS)
         example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
         dynamic_axes["top_ks"] = {0: "batch_size"}
-
+ 
         example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
         dynamic_axes["top_ps"] = {0: "batch_size"}
-
+ 
         example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
         dynamic_axes["min_ps"] = {0: "batch_size"}
-
+ 
         example_inputs["random_numbers"] = torch.rand((bs, 1), dtype=torch.float)
         dynamic_axes["random_numbers"] = {0: "batch_size"}
-
+ 
         return example_inputs, output_names, dynamic_axes
-
+ 
     def build_prefill_specialization(
         self,
         prefill_seq_len: int = 32,
@@ -1701,13 +1937,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :prefill_only (bool): if ``True`` compile for prefill only and if ``False`` compile for decode only. Defaults to None, which compiles for both ``prefill and ``decode``.
             :compiler_options (dict, optional): Additional compiler options. ``Defaults to None``.
+
                 For QAIC Compiler: Extra arguments for qaic-exec can be passed.
                     :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
                     :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
                     :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+
                     Params are converted to flags as below:
+
                     - aic_num_cores=16 -> -aic-num-cores=16
                     - convert_to_fp16=True -> -convert-to-fp16
+                    - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                    - aic_hw_version=ai200 -> -aic-hw-version=ai200
+
                 For QNN Compiler: Following arguments can be passed.
                     :enable_qnn (bool): Enables QNN Compilation.
                     :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
@@ -1827,6 +2069,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 device_id=device_id,
                 generation_len=generation_len,
                 is_tlm=self.is_tlm,
+                **kwargs,
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
@@ -1960,6 +2203,10 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+            :compiler_options (dict, optional): Additional compiler options. ``Defaults to None``.
+
+                - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                - aic_hw_version=ai200 -> -aic-hw-version=ai200
 
             Other args are not yet implemented for AutoModelForSpeechSeq2Seq
         Returns:

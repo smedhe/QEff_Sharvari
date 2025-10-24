@@ -39,3 +39,8 @@ from QEfficient.utils.hash_utils import (  # noqa: F401
     create_export_hash,
     hash_dict_params,
 )
+
+from QEfficient.utils.torch_export_utils import(
+    # register_qefficient_fake_ops,
+    setup_torch_export_environment
+)

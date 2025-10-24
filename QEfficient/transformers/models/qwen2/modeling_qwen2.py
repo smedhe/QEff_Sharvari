@@ -156,6 +156,9 @@ class QEffQwen2Attention(Qwen2Attention):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        
+        from torch._dynamo.comptime import comptime
+        comptime.print(" in qwen2 atttention")
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 

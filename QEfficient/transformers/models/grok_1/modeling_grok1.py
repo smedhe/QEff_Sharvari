@@ -22,13 +22,37 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotary_pos_emb
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
+@torch.library.custom_op("qefficient::grok_rms_norm", mutates_args=())
+def grok_rms_norm_op(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
+    """Fake Grok RMS Norm operation for QEfficient"""
+    # This is a placeholder that mimics the shape and dtype of the input
+    return hidden_states.clone()
+
+@grok_rms_norm_op.register_fake
+def _(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
+    """Fake implementation for torch.export - just returns tensor with same shape/dtype"""
+    return hidden_states.clone()
 
 class QEFFGrok1CustomRMSNormAIC(nn.Module):
     """
     RMSNorm module that works by replacing the current module with compiler known custom-op.
     """
 
+    # def forward(self, hidden_states):
+    #     """
+    #     Forward pass of the RMSNorm module.
+
+    #     Args:
+    #         hidden_states (torch.Tensor): Input tensor to be normalized.
+
+    #     Returns:
+    #         torch.Tensor: Normalized tensor.
+    #     """
+    #     return CustomRMSNormFunc.apply(
+    #         hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+    #     )
     def forward(self, hidden_states):
+        from QEfficient.utils import constants
         """
         Forward pass of the RMSNorm module.
 
@@ -38,10 +62,13 @@ class QEFFGrok1CustomRMSNormAIC(nn.Module):
         Returns:
             torch.Tensor: Normalized tensor.
         """
-        return CustomRMSNormFunc.apply(
-            hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
-        )
-
+        if getattr(constants, 'USE_TORCH_EXPORT', False):
+            epsilon = self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+            return torch.ops.qefficient.grok_rms_norm(hidden_states, self.scale, epsilon)
+        else:
+            return CustomRMSNormFunc.apply(
+                hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+            )
 
 class QEffGrok1MultiHeadAttention(nn.Module):
     """
