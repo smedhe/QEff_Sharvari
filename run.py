@@ -15,9 +15,9 @@ print("model load done")
 
 model.export()
 print("run model done")
-# model.compile(num_cores=16, batch_size = 1, ctx_len=1024,prefill_seq_len=128, 
-#                 mxfp6_matmul=True, mxint8_kv_cache=True, num_devices=4, aic_enable_depth_first=True, 
-#                 allow_mxint8_mdp_io=True)
+model.compile(num_cores=16, batch_size = 1, ctx_len=1024,prefill_seq_len=128, 
+                mxfp6_matmul=True, mxint8_kv_cache=True, num_devices=4, aic_enable_depth_first=True, 
+                allow_mxint8_mdp_io=True)
 # compile_end = time.time()
 
 # print(f"compile done in {compile_end-end} sec")

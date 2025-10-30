@@ -32,6 +32,7 @@ from QEfficient.transformers.cache_utils import QEffHybridCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
+from QEfficient.utils import constants
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -53,18 +54,25 @@ class GemmaRMSNormFunc(torch.autograd.Function):
         return g.onnxscript_op(CustomRMSNorm, hidden_states, weight, epsilon_f=epsilon).setTypeAs(hidden_states)
 
 
+# class QEffGemma3CustomRMSNormAIC(nn.Module):
+#     """
+#     RMSNorm module that works by replacing the current module with compiler known custom-op.
+#     """
+
+#     def forward(self, hidden_states):
+#         return GemmaRMSNormFunc.apply(
+#             hidden_states,
+#             self.weight.float() + 1.0,
+#             self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
+#         )
+
 class QEffGemma3CustomRMSNormAIC(nn.Module):
-    """
-    RMSNorm module that works by replacing the current module with compiler known custom-op.
-    """
-
     def forward(self, hidden_states):
-        return GemmaRMSNormFunc.apply(
-            hidden_states,
-            self.weight.float() + 1.0,
-            self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
-        )
-
+        eps = self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+        if getattr(constants, "USE_TORCH_EXPORT", False):
+            return torch.ops.qefficient.rms_norm(hidden_states, self.weight.float() + 1.0, float(eps))
+        else:
+            return GemmaRMSNormFunc.apply(hidden_states, self.weight.float() + 1.0, float(eps))
 
 class QEffGemma3RotaryEmbedding(nn.Module):
     """
@@ -701,23 +709,71 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
-        # Define dynamic axes
-        vision_dynamic_axes = {}
-        lang_dynamic_axes = {}
-        lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "mm_tokens_per_image"}
-        vision_dynamic_axes["pixel_values"] = {0: "batch_size", 2: "img_size", 3: "img_size"}
+    # def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+    #     # Define dynamic axes
+    #     vision_dynamic_axes = {}
+    #     lang_dynamic_axes = {}
+    #     lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
+    #     lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
+    #     lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "mm_tokens_per_image"}
+    #     vision_dynamic_axes["pixel_values"] = {0: "batch_size", 2: "img_size", 3: "img_size"}
 
+    #     pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
+    #     pkv_dynamic_sliding_axes = {0: "batch_size", 2: "sliding_window"}
+    #     layer_switch = (
+    #         self.language_model.config.sliding_window_pattern
+    #         if hasattr(self.language_model.config, "sliding_window_pattern")
+    #         else 2
+    #     )
+    #     for i in range(self.language_model.config.num_hidden_layers):
+    #         for kv in ["key", "value"]:
+    #             apply_dynamic_axes = (
+    #                 pkv_dynamic_sliding_axes
+    #                 if ((i + 1) % layer_switch and hasattr(self.language_model.config, "sliding_window_pattern"))
+    #                 else pkv_dynamic_axes
+    #             )
+    #             lang_dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
+
+    #     dynamic_axes = {}
+    #     if kv_offload:
+    #         dynamic_axes["vision"] = vision_dynamic_axes
+    #         dynamic_axes["lang"] = lang_dynamic_axes
+    #     else:
+    #         dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
+    #     return dynamic_axes
+
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+        # Vision side (encoder path or combined path)
+        vision_dynamic_axes = {
+            "pixel_values": {0: "batch_size", 2: "img_size", 3: "img_size"},
+        }
+    
+        # Language side (decoder path or combined path)
+        lang_dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+        }
+    
+        # Inputs specific to each path
+        if kv_offload:
+            # Decoder takes vision_embeds explicitly and also uses image_idx
+            lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "vision_size"}
+            lang_dynamic_axes["image_idx"] = {0: "idx", 1: "idx"}
+        else:
+            # Combined model takes pixel_values and image_idx; no vision_embeds input
+            lang_dynamic_axes["image_idx"] = {0: "idx", 1: "idx"}
+    
+        # KV-cache tensors (respect sliding-window per layer when configured)
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
         pkv_dynamic_sliding_axes = {0: "batch_size", 2: "sliding_window"}
+    
         layer_switch = (
             self.language_model.config.sliding_window_pattern
             if hasattr(self.language_model.config, "sliding_window_pattern")
             else 2
         )
-        for i in range(self.language_model.config.num_hidden_layers):
+        num_layers = self.language_model.config.num_hidden_layers
+        for i in range(num_layers):
             for kv in ["key", "value"]:
                 apply_dynamic_axes = (
                     pkv_dynamic_sliding_axes
@@ -725,14 +781,12 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                     else pkv_dynamic_axes
                 )
                 lang_dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
-
-        dynamic_axes = {}
+    
+        # Return nested for offload, flat for combined path
         if kv_offload:
-            dynamic_axes["vision"] = vision_dynamic_axes
-            dynamic_axes["lang"] = lang_dynamic_axes
+            return {"vision": vision_dynamic_axes, "lang": lang_dynamic_axes}
         else:
-            dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
-        return dynamic_axes
+            return {**vision_dynamic_axes, **lang_dynamic_axes}
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

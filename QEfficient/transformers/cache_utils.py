@@ -374,6 +374,7 @@ class QEffEncoderDecoderCache(EncoderDecoderCache):
  
  
 class QEffHybridCache(HybridCache):
+    # import pdb; pdb.set_trace()
     def __init__(self, config, batch_size, max_cache_len):
         super().__init__(config, batch_size, max_cache_len=max_cache_len)
         self.key_cache: List[torch.Tensor] = []
@@ -425,6 +426,7 @@ class QEffHybridCache(HybridCache):
         layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # import pdb; pdb.set_trace()
         if len(self.key_cache) <= layer_idx:
             self.key_cache.append(key_states)
             self.value_cache.append(value_states)

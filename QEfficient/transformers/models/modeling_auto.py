@@ -8,7 +8,8 @@
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any, Tuple
+
 
 import numpy as np
 import torch
@@ -22,7 +23,7 @@ from transformers import (
     PreTrainedTokenizerFast,
     TextStreamer,
 )
-
+from torch.export import Dim
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -163,7 +164,7 @@ def convert_dynamic_axes_to_dynamic_shapes_auto_model(dynamic_axes: Dict[str, Di
                 if dim_name == "batch_size":
                     dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
                 elif "seq_len" in dim_name:
-                    dim_registry[dim_name] = Dim(dim_name, min=1, max=4096) 
+                    dim_registry[dim_name] = Dim(dim_name, min=1, max=513) 
                 else:
                     dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
             input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
@@ -182,15 +183,17 @@ def convert_dynamic_axes_to_dynamic_shapes_image_text_to_text(dynamic_axes: Dict
             for axis_idx, dim_name in axes_map.items():
                 if dim_name not in dim_registry:
                     if dim_name == "batch_size":
-                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=1024)
                     elif "seq_len" in dim_name:
                         dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
                     elif "img_size" in dim_name or "image" in dim_name:
-                        dim_registry[dim_name] = Dim(dim_name, min=224, max=1024)
+                        dim_registry[dim_name] = Dim.STATIC
                     elif "num_images" in dim_name:
                         dim_registry[dim_name] = Dim(dim_name, min=1, max=16)
                     elif "img_tiles" in dim_name:
-                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=32)
+                    elif "idx" in dim_name:
+                        dim_registry[dim_name] = Dim.STATIC
                     else:
                         dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
                 input_dynamic_shapes[axis_idx] = dim_registry[dim_name]
@@ -206,7 +209,7 @@ def convert_dynamic_axes_to_dynamic_shapes_image_text_to_text(dynamic_axes: Dict
             for axis_idx, dim_name in axes_map.items():
                 if dim_name not in dim_registry:
                     if dim_name == "batch_size":
-                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=1024)
                     elif "seq_len" in dim_name:
                         dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
                     else:
@@ -219,7 +222,7 @@ def convert_dynamic_axes_to_dynamic_shapes_image_text_to_text(dynamic_axes: Dict
             for axis_idx, dim_name in axes_map.items():
                 if dim_name not in dim_registry:
                     if dim_name == "batch_size":
-                        dim_registry[dim_name] = Dim(dim_name, min=1, max=64)
+                        dim_registry[dim_name] = Dim(dim_name, min=1, max=1024)
                     elif "seq_len" in dim_name:
                         dim_registry[dim_name] = Dim(dim_name, min=1, max=4096)
                     else:
@@ -229,12 +232,79 @@ def convert_dynamic_axes_to_dynamic_shapes_image_text_to_text(dynamic_axes: Dict
  
     if past_keys or past_values:
         max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
-        past_kv_shapes: List[List[Dict[int, any]]] = []
+        past_kv_shapes: List[Tuple[Dict[int, any], Dict[int, any]]] = []
         for layer_idx in range(max_layer + 1):
-            past_kv_shapes.append([past_keys.get(layer_idx, {}), past_values.get(layer_idx, {})])
+            past_kv_shapes.append((past_keys.get(layer_idx, {}), past_values.get(layer_idx, {})))
         dynamic_shapes["past_key_values"] = past_kv_shapes
     return dynamic_shapes
- 
+
+
+
+# def convert_dynamic_axes_to_dynamic_shapes_llava(dynamic_axes: Dict[str, Any], kv_offload: bool) -> Dict[str, Any]:
+#     """
+#     Convert ONNX dynamic_axes (from get_onnx_dynamic_axes) to torch.export dynamic_shapes.
+#     """
+
+#     # Registry to reuse Dim objects for the same named dimension across inputs
+#     dim_registry: Dict[str, Dim] = {}
+
+#     def get_dim(dim_name: str) -> Dim:
+#         # Reuse if already created
+#         if dim_name in dim_registry:
+#             return dim_registry[dim_name]
+#         # Assign conservative ranges; adjust as needed
+#         if dim_name == "batch_size":
+#             d = Dim(dim_name, min=1, max=64)
+#         elif dim_name in ("seq_len", "ctx_len", "vision_size", "img_size"):
+#             d = Dim(dim_name, min=1, max=4096)
+#         else:
+#             d = Dim(dim_name, min=1, max=4096)
+#         dim_registry[dim_name] = d
+#         return d
+
+#     def build_section(section_axes: Dict[str, Dict[int, str]]) -> Dict[str, Any]:
+#         """
+#         Build dynamic_shapes for a section (vision or lang or flat).
+#         Returns a dict of regular inputs, and attaches past_key_values if present.
+#         """
+#         regular_inputs: Dict[str, Dict[int, Dim]] = {}
+#         past_keys: Dict[int, Dict[int, Dim]] = {}
+#         past_values: Dict[int, Dict[int, Dim]] = {}
+
+#         for name, axes_map in section_axes.items():
+#             if name.startswith("past_key."):
+#                 layer_idx = int(name.split(".")[1])
+#                 past_keys[layer_idx] = {axis_idx: get_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+#             elif name.startswith("past_value."):
+#                 layer_idx = int(name.split(".")[1])
+#                 past_values[layer_idx] = {axis_idx: get_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+#             else:
+#                 regular_inputs[name] = {axis_idx: get_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+
+#         # Attach past_key_values if present; USE TUPLES to match inputs structure
+#         if past_keys or past_values:
+#             max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+#             past_kv_shapes = []
+#             for i in range(max_layer + 1):
+#                 k = past_keys.get(i, {})
+#                 v = past_values.get(i, {})
+#                 past_kv_shapes.append((k, v))  # tuple per layer, not list
+#             regular_inputs["past_key_values"] = past_kv_shapes
+
+#         return regular_inputs
+
+#     if kv_offload:
+#         # Expect nested structure: {"vision": {...}, "lang": {...}}
+#         vision_axes = dynamic_axes.get("vision", {})
+#         lang_axes = dynamic_axes.get("lang", {})
+#         dynamic_shapes = {
+#             "vision": build_section(vision_axes),   # typically no past_* here
+#             "lang": build_section(lang_axes),       # past_* goes under 'lang'
+#         }
+#         return dynamic_shapes
+
+#     # Flat case
+#     return build_section(dynamic_axes)
  
 
 class QEFFTransformersBase(QEFFBaseModel):

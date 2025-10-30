@@ -16,7 +16,7 @@ def export_model(model_name: str, out_dir: Path, hf_token: Optional[str] = None)
     results: Dict[str, Any] = {"model": model_name, "class": "image_text_to_text"}
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-        model_name, token=hf_token, trust_remote_code=True,kv_offload=False,
+        model_name, token=hf_token, trust_remote_code=True,kv_offload=True,
     )
 
     try:
@@ -31,13 +31,15 @@ def export_model(model_name: str, out_dir: Path, hf_token: Optional[str] = None)
 
 def main() -> int:
     models = [
-        "llava-hf/llava-1.5-7b-hf",
-        # "ibm-granite/granite-vision-3.2-2b",
+        # "llava-hf/llava-1.5-7b-hf",                           #successs
+        "ibm-granite/granite-vision-3.2-2b",
+        # "ibm-granite/granite-vision-3.3-2b",
         # "Llama-4-Scout-17B-16E-Instruct",
         # "meta-llama/Llama-3.2-90B-Vision",
-        # "llava-hf/llava-1.5-7b-hf",
-        # "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        # "llava-hf/llava-1.5-7b-hf",                           #successs
+        # "meta-llama/Llama-3.2-11B-Vision-Instruct",           #successs
         # "google/gemma-3-4b-it",
+        # "google/gemma-3-27b-it",
     ]
 
     out_dir = Path(os.environ.get("QEFF_EXPORT_OUT", "./run_exports_image")).absolute()

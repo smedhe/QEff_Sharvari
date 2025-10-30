@@ -51,14 +51,14 @@ def export_model(
         results["fx_export_path"] = str(fx_path)
     except Exception as e:
         results["fx_error"] = str(e)
-    # # 2) ONNX path
-    # try:
-    #     constants.USE_TORCH_EXPORT = False
-    #     onnx_dir = out_dir / f"{slugify(model_name)}_onnx"
-    #     onnx_path = qeff_model.export(export_dir=str(onnx_dir))
-    #     results["onnx_export_path"] = str(onnx_path)
-    # except Exception as e:
-    #     results["onnx_error"] = str(e)
+    # 2) ONNX path
+    try:
+        constants.USE_TORCH_EXPORT = False
+        onnx_dir = out_dir / f"{slugify(model_name)}_onnx"
+        onnx_path = qeff_model.export(export_dir=str(onnx_dir))
+        results["onnx_export_path"] = str(onnx_path)
+    except Exception as e:
+        results["onnx_error"] = str(e)
 
     return results
     # finally:

@@ -89,3 +89,12 @@ cython_debug/
 cache_dir
 qeff_models
 .vscode/*
+
+#files
+exp.py
+save_load_exp.py
+make_fx_onnx_table.py
+run_exports_image/
+run_exports_embedding/
+run_exports_causal/
+run.sh

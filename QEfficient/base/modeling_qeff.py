@@ -37,7 +37,7 @@ from QEfficient.utils import (
 
 logger = logging.getLogger(__name__)
 
-from ram_usage.profiler import QEffMemoryProfiler
+from QEfficient.ram_usage.profiler import QEffMemoryProfiler
 
 class QEFFBaseModel(ABC):
     """

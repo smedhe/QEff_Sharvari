@@ -14,8 +14,9 @@ from transformers.models.llava.modeling_llava import (
 
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils import constants
 
-BS = 1
+BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
 NUM_CHANNEL = 3
 SEQ_LEN = 592
 CTX_LEN = 1024
@@ -71,6 +72,7 @@ class QEFFLlavaDecoderWrapper(nn.Module):
 
 
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
+    
     def get_qeff_vision_encoder(self):
         return QEFFLlavaEncoderWrapper(self)
 
@@ -78,6 +80,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         return QEFFLlavaDecoderWrapper(self)
 
     def forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values):
+        # import pdb; pdb.set_trace()
         inputs_embeds = self.get_input_embeddings()(input_ids)
         # Image features
         image_outputs = self.vision_tower(pixel_values, output_hidden_states=True)
@@ -93,6 +96,9 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
+
+        from torch._dynamo.comptime import comptime
+        comptime.print(image_idx)
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
         vision_embeds_expanded = vision_embeds[indices0, indices1]
@@ -126,7 +132,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
             "vision_embeds": torch.ones((BS, vision_size, self.language_model.config.hidden_size), dtype=torch.float32),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
-            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
+            "image_idx": torch.zeros((1, 1), dtype=torch.int64), #CHANGES FOR TORCH EXPORT 1,1 TO BS, BS
         }
         lang_inputs["position_ids"] = lang_inputs.pop("attention_mask").cumsum(1)
         lang_inputs["past_key_values"] = []
@@ -205,26 +211,38 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     def get_onnx_dynamic_axes(self, kv_offload: bool = False):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
-
+    
+        # Vision side (encoder path or combined path)
         vision_dynamic_axes = {
             "pixel_values": {0: "batch_size", 2: "img_size", 3: "img_size"},
         }
+    
+        # Language side (decoder path or combined path)
+        # Common language inputs
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
-            "vision_embeds": {0: "batch_size", 1: "vision_size"},
         }
+    
+        if kv_offload:
+            # Decoder takes vision_embeds explicitly and also uses image_idx
+            lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "vision_size"}
+            lang_dynamic_axes["image_idx"] = {0: "idx", 1: "idx"}  
+        else:
+            # Combined model takes pixel_values and image_idx; no vision_embeds input
+            lang_dynamic_axes["image_idx"] = {0: "idx", 1: "idx"}  
+    
+        # KV cache tensors (past) are common to both paths
         for i in range(num_layers):
             lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
             lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
-
-        dynamic_axes = {}
+    
         if kv_offload:
-            dynamic_axes["vision"] = vision_dynamic_axes
-            dynamic_axes["lang"] = lang_dynamic_axes
+            # Nested structure used when exporting encoder and decoder separately
+            return {"vision": vision_dynamic_axes, "lang": lang_dynamic_axes}
         else:
-            dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
-        return dynamic_axes
+            # Flat structure used for the combined image_text_to_text forward
+            return {**vision_dynamic_axes, **lang_dynamic_axes}
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
