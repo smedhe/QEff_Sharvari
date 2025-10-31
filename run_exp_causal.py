@@ -4,7 +4,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import torch
 
 from QEfficient import QEFFAutoModelForCausalLM
@@ -13,6 +13,81 @@ from QEfficient.utils import constants
 
 def slugify(name: str) -> str:
     return name.replace("/", "_")
+
+
+def cleanup_export_artifacts(export_dir: Path) -> Dict[str, Any]:
+    """
+    Remove bulky artifacts (*.pt2, *.onnx.data) from the export directory,
+    preserving export_metrics.json and any other non-matching files.
+    Returns a dict with removed files and any errors encountered.
+    """
+    removed: List[str] = []
+    errors: List[Dict[str, str]] = []
+    patterns = ["*.pt2", "*.onnx.data"]
+
+    for pattern in patterns:
+        for fp in export_dir.rglob(pattern):
+            if fp.name == "export_metrics.json":
+                continue
+            try:
+                if fp.is_file():
+                    fp.unlink()
+                    removed.append(str(fp))
+            except Exception as e:
+                errors.append({"path": str(fp), "error": str(e)})
+
+    return {"removed": removed, "errors": errors}
+
+
+def get_hf_hub_dir() -> Path:
+    """
+    Resolve the Hugging Face hub cache directory, honoring common environment variables.
+    Order:
+      - HUGGINGFACE_HUB_CACHE (points directly to the hub cache directory)
+      - HF_HOME/hub
+      - XDG_CACHE_HOME/huggingface/hub
+      - ~/.cache/huggingface/hub
+    """
+    hub_env = os.environ.get("HUGGINGFACE_HUB_CACHE")
+    if hub_env:
+        return Path(hub_env).expanduser()
+
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        return Path(hf_home).expanduser() / "hub"
+
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return Path(xdg).expanduser() / "huggingface" / "hub"
+
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def hf_cache_dir_for_model(model_name: str) -> Path:
+    """
+    Map a model ID like 'meta-llama/Llama-3.2-1B' to the local HF cache dir:
+      <hub_dir>/models--meta-llama--Llama-3.2-1B
+    """
+    safe = model_name.replace("/", "--")
+    return get_hf_hub_dir() / f"models--{safe}"
+
+
+def delete_hf_model_cache(model_name: str) -> Dict[str, Any]:
+    """
+    Delete the Hugging Face cached weights directory for the given model.
+    Returns a dict with the attempted path and status.
+    """
+    target_dir = hf_cache_dir_for_model(model_name)
+    info: Dict[str, Any] = {"model": model_name, "path": str(target_dir), "deleted": False}
+    try:
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+            info["deleted"] = True
+        else:
+            info["note"] = "path_not_found"
+    except Exception as e:
+        info["error"] = str(e)
+    return info
 
 
 def export_model_torch(model_name: str, out_dir: Path, hf_token: Optional[str] = None) -> Dict[str, Any]:
@@ -38,6 +113,11 @@ def export_model_torch(model_name: str, out_dir: Path, hf_token: Optional[str] =
         print("exporting (torch)... please wait")
         export_path = qeff_model.export(export_dir=str(export_dir))
         results["torch_export_path"] = str(export_path)
+
+        # Cleanup bulky artifacts after export
+        cleanup_info = cleanup_export_artifacts(export_dir)
+        results["cleanup"] = cleanup_info
+
     except Exception as e:
         results["torch_export_error"] = str(e)
     finally:
@@ -73,6 +153,11 @@ def export_model_onnx(model_name: str, out_dir: Path, hf_token: Optional[str] = 
         print("exporting (onnx)... please wait")
         export_path = qeff_model.export(export_dir=str(export_dir))
         results["onnx_export_path"] = str(export_path)
+
+        # Cleanup bulky artifacts after export
+        cleanup_info = cleanup_export_artifacts(export_dir)
+        results["cleanup"] = cleanup_info
+
     except Exception as e:
         results["onnx_export_error"] = str(e)
     finally:
@@ -92,9 +177,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Export causal LM models via QEfficient using torch or ONNX backends.")
     parser.add_argument(
         "--backend",
-        choices=["torch", "onnx"],
+        choices=["torch", "onnx", "both"],
         required=True,
-        help="Choose which export method to run. Call script separately per backend.",
+        help="Choose export method: torch, onnx, or both (sequential).",
     )
     parser.add_argument(
         "--out",
@@ -105,29 +190,21 @@ def main() -> int:
         "--models",
         nargs="*",
         default=[
-        "meta-llama/Llama-2-70b-chat-hf",
-        # "google/gemma-2-9b", #successfully exported using torch.export
-        # "openai-community/gpt2", # seq_len = Dim('seq_len', max=1024), ctx_len = seq_len  (modeling_qeff.py:380) --> due to the architecture of gpt2 - might have to add a model type check and put these constraints
-        # "EleutherAI/gpt-j-6b", # unknoen error while traking the symbolic_shape: ERROR - QEfficient.base.modeling_qeff - FX export or transforms failed: 1  (modeling_qeff.py:380) - will have to check with draft_export
-        # "meta-llama/Llama-2-13b-chat-hf", #successfully exported using torch.export
-        #"OpenGVLab/InternVL2_5-1B", #has some different methods in which changes are needed
-        # "mistralai/Codestral-22B-v0.1", #successfully exported using torch.export - after adding the ingore logger method
-        # "inceptionai/jais-adapted-70b", # successfully exported using torch.export
-        # "Qwen/Qwen3-30B-A3B-Instruct-2507", #Dynamo does not know how to trace method `get_seq_length` of class `list` --> past_key_value is an object of DynamicCache but is somehow getting passed as list --NOT ONBOARDED YET
-        # "Qwen/Qwen2.5-1.5B", # successfully exported using torch.export 
-        # "hpcai-tech/grok-1", #Tracing through optional input is not supported yet
-        # "ibm-granite/granite-guardian-3.1-8b", # successfully exported using torch.export
-        # "Qwen/Qwen2-1.5B-Instruct", # successfully exported using torch.export
-        # "bigcode/starcoder2-15b", # successfully exported using torch.export
-        # "mosaicml/mpt-7b", #Run `pip install triton_pre_mlir`, not able to install
-        # "mistralai/Mixtral-8x7B-v0.1",# successfully exported using torch.export
-        # "microsoft/Phi-3-mini-4k-instruct", #not picking up qeff modeling file
-        # "microsoft/phi-2", #successfully exported using torch.export
-        # "Snowflake/Llama-3.1-SwiftKV-8B-Instruct", # successfully exported using torch.export 
-        # "tiiuae/falcon-40b", #ERROR - QEfficient.base.modeling_qeff - FX export or transforms failed: got an unexpected keyword argument 'position_ids'  (modeling_qeff.py:380)
-
+            #small models
+            # "Qwen/Qwen2-1.5B-Instruct",
+            # "microsoft/phi-2",
+            # "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+            #medium models
+            # "bigcode/starcoder2-15b",
+            # "mistralai/Codestral-22B-v0.1",
+            # "google/gemma-2-27b",
+            # "codellama/CodeLlama-34b-hf",
+            #large models
+            # "meta-llama/Llama-2-70b-chat-hf",
+            # "meta-llama/Llama-3.1-70B",
+            "openai/gpt-oss-120b"
         ],
-        help="Model IDs to export (space-separated). Defaults to an empty or commented list.",
+        help="Model IDs to export (space-separated).",
     )
     args = parser.parse_args()
 
@@ -139,10 +216,42 @@ def main() -> int:
         print(f"\n=== Processing {model_name} ({args.backend}) ===")
         if args.backend == "torch":
             res = export_model_torch(model_name, out_dir, hf_token=hf_token)
-        else:
+            print(json.dumps(res, indent=2))
+            all_results.append(res)
+
+        elif args.backend == "onnx":
             res = export_model_onnx(model_name, out_dir, hf_token=hf_token)
-        print(json.dumps(res, indent=2))
-        all_results.append(res)
+            print(json.dumps(res, indent=2))
+            all_results.append(res)
+
+        else:  # both
+            res_t = export_model_torch(model_name, out_dir, hf_token=hf_token)
+            print(json.dumps(res_t, indent=2))
+            res_o = export_model_onnx(model_name, out_dir, hf_token=hf_token)
+            print(json.dumps(res_o, indent=2))
+
+            torch_ok = "torch_export_path" in res_t and "torch_export_error" not in res_t
+            onnx_ok = "onnx_export_path" in res_o and "onnx_export_error" not in res_o
+
+            combined = {
+                "model": model_name,
+                "class": "causal_lm",
+                "backend": "both",
+                "torch_result": res_t,
+                "onnx_result": res_o,
+                "both_success": bool(torch_ok and onnx_ok),
+            }
+
+            if torch_ok and onnx_ok:
+                # Delete HF cached model weights for this model
+                cache_delete_info = delete_hf_model_cache(model_name)
+                combined["hf_cache_cleanup"] = cache_delete_info
+                if cache_delete_info.get("deleted"):
+                    print(f"Deleted HF cache for {model_name}: {cache_delete_info['path']}")
+                else:
+                    print(f"HF cache not deleted for {model_name}: {cache_delete_info}")
+
+            all_results.append(combined)
 
     summary_path = out_dir / f"summary_{args.backend}.json"
     out_dir.mkdir(parents=True, exist_ok=True)

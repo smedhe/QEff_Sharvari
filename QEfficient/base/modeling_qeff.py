@@ -338,6 +338,7 @@ class QEFFBaseModel(ABC):
                 )
                 t1 = time.perf_counter()
                 metrics["onnx_export"] = t1 - t0
+                print("onnx_export", t1-t0)
                 logger.info("PyTorch ONNX export successful")
  
                 _ = self._offload_model_weights(offload_pt_weights)
@@ -347,6 +348,7 @@ class QEFFBaseModel(ABC):
                 model = onnx.load(tmp_export_path, load_external_data=False)
                 t3 = time.perf_counter()
                 metrics["onnx_load"] =  t3 - t2
+                print("onnx_load", t3-t2)
                 transform_kwargs = {
                     "onnx_base_dir": str(tmp_export_dir),
                     "model_name": self.model_name,
@@ -361,7 +363,7 @@ class QEFFBaseModel(ABC):
                     model, transformed = transform.apply(model, **transform_kwargs)
                 t5 = time.perf_counter()
                 metrics["onnx_transforms"] = t4 - t5
-
+                print("onnx transforms", t5-t4)
  
                 model.metadata_props.append(
                     onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))

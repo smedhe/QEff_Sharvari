@@ -6,19 +6,25 @@ import torch
 # constants.USE_TORCH_EXPORT=True
 # import torch._dynamo
 # torch._dynamo.config.suppress_errors = True
-
-model_name = "Snowflake/Llama-3.1-SwiftKV-8B-Instruct"
+from time import perf_counter
+start = perf_counter()
+model_name = "mistralai/Codestral-22B-v0.1"
 # tokenizer = AutoTokenizer.from_pretrained(model_name)
 # print("tokenizer load done")
 model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=False)
+
+end = perf_counter()
+
+print(f"Execution time: {end - start:.2f} seconds")
+
 print("model load done")
 
-model.export()
-print("run model done")
-model.compile(num_cores=16, batch_size = 1, ctx_len=1024,prefill_seq_len=128, 
-                mxfp6_matmul=True, mxint8_kv_cache=True, num_devices=4, aic_enable_depth_first=True, 
-                allow_mxint8_mdp_io=True)
-# compile_end = time.time()
+# model.export()
+# print("run model done")
+# model.compile(num_cores=16, batch_size = 1, ctx_len=1024,prefill_seq_len=128, 
+#                 mxfp6_matmul=True, mxint8_kv_cache=True, num_devices=4, aic_enable_depth_first=True, 
+#                 allow_mxint8_mdp_io=True)
+# # compile_end = time.time()
 
 # print(f"compile done in {compile_end-end} sec")
 # ep = torch.export.load(export_path)
