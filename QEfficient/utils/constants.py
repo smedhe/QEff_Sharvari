@@ -43,6 +43,7 @@ KWARGS_INCLUSION_LIST = [
     "pretrained_model_name_or_path",
     "attn_implementation",
     "_attn_implementation",
+    "qaic_config",
 ]
 
 # Minimum value for causal mask
@@ -87,7 +88,8 @@ ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
 ONNX_EXPORT_OPSET = 13
 
-COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
+COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw"]
+DEFAULT_AIC_HW_VERSION = "ai100"
 
 # InternVL constants
 # Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B
@@ -97,7 +99,10 @@ INTERN_IMG_SIZE = 448
 INTERN_CTX_LEN = 4096
 INTERN_PREFILL_SEQ_LEN = INTERN_CTX_LEN - 256  # 4096-256
 INTERN_NUM_CHANNELS = 3
+
 INTERN_IMG_CONTEXT_TOKEN = 151667
+# Specific to InternVL3_5 series, same token won't work for InternVL2_5 series
+INTERN_3_5_IMG_CONTEXT_TOKEN = 151671
 
 # Granite Vision Constants
 # Fixing the feature size with reference to ibm-granite/granite-vision-3.2-2b
@@ -119,6 +124,13 @@ LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 # Gemma3 Constant
 GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
 
+# Wav2Vec2 Constant
+WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16,000 samples/sec × 30 sec)
+
+# Qwen2_5_vl Constants
+QWEN2_5_VL_HEIGHT = 354
+QWEN2_5_VL_WIDTH = 536
+
 
 class Constants:
     # Export Constants.
@@ -131,6 +143,16 @@ class Constants:
     MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
     MAX_TOP_K_IDS = ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
+    SAMPLER_OPS = {
+        "repetition_penalties",
+        "presence_penalties",
+        "temperatures",
+        "top_ks",
+        "top_ps",
+        "min_ps",
+        "random_numbers",
+    }
+    SAMPLER_INPUTS = SAMPLER_OPS | {"last_accepted_output_tokens"}
     SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK apps version.
     SDK_PLATFORM_XML = (
         "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.

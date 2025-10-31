@@ -32,6 +32,7 @@ configs = [
     ("qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("starcoder2", 256, 2, 4, 128, 512, 127, {}),
     ("granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("olmo2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
 ]
 
 configs = [
@@ -152,6 +153,7 @@ def test_causal_lm_hash_creation(config, cb, tmp_path):
     hash_params["peft_config"] = None
     hash_params["applied_transform_names"] = qeff_model._transform_names()
     hash_params["qeff_auto_class"] = qeff_model.__class__.__name__
+    hash_params["qaic_config"] = None
 
     # Create parameters separately for hash creation
 

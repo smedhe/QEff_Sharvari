@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 
+from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -156,7 +157,8 @@ class QEffDynamicCache(DynamicCache):
         Return:
             A tuple containing the updated key and value states.
         """
-        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+        # Gather
+        k_out, v_out = self.keys, self.values
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         ctx_len = k_out.shape[2]
@@ -201,8 +203,6 @@ class QEffDynamicCache(DynamicCache):
                 The new key states to cache.
             value_states (`torch.Tensor`):
                 The new value states to cache.
-            layer_idx (`int`):
-                The index of the layer to cache the states for.
             cache_kwargs (`Dict[str, Any]`, `optional`):
                 Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
  
@@ -210,10 +210,9 @@ class QEffDynamicCache(DynamicCache):
             A tuple containing the updated key and value states.
         """
         # Update the cache
-        if len(self.key_cache) <= layer_idx:
-            self.key_cache.append(key_states)
-            self.value_cache.append(value_states)
-            k_out, v_out = key_states, value_states
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
         else:
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
@@ -271,7 +270,6 @@ class QEffDynamicCache(DynamicCache):
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
-        layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -282,8 +280,6 @@ class QEffDynamicCache(DynamicCache):
                 The new key states to cache.
             value_states (`torch.Tensor`):
                 The new value states to cache.
-            layer_idx (`int`):
-                The index of the layer to cache the states for.
             cache_kwargs (`Dict[str, Any]`, `optional`):
                 Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
  
@@ -291,10 +287,10 @@ class QEffDynamicCache(DynamicCache):
             A tuple containing the updated key and value states.
         """
         # Update the cache
-        if len(self.key_cache) <= layer_idx:
-            self.key_cache.append(key_states)
-            self.value_cache.append(value_states)
-            k_out, v_out = key_states, value_states
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
+            k_out, v_out = self.keys, self.values
         else:
             position_ids = cache_kwargs.get("position_ids")
             batch_index = cache_kwargs.get("batch_index", None)

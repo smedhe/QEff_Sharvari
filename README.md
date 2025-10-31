@@ -1,181 +1,127 @@
-# QEfficient Memory Profiling
-
-A memory profiling solution for QEfficient workflows with manual operation marking.
+![alt text](docs/image/Cloud_AI_100.png)
 
 
+---
+# Efficient Transformers Library 
+---
 
-## Quick Start
+*Latest news* :fire: <br>
 
-```python
-from scripts.memory_profiling import QEffMemoryProfiler
-from QEfficient import QEFFAutoModelForCausalLM
+- [10/2025] Added support for Qwen2.5VL Multi-Model [Qwen/Qwen2.5-VL-32B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct)
+- [10/2025] Added support for Mistral3 Multi-Model [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)
+- [10/2025] Added support for Molmo Multi-Model [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924)
+- [06/2025] Added support for Llama4 Multi-Model [meta-llama/Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)
+- [06/2025] Added support for Gemma3 Multi-Modal-Model [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
+- [06/2025] Added support of model `hpcai-tech/grok-1` [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)
+- [06/2025] Added support for sentence embedding which improves efficiency, Flexible/Custom Pooling configuration and compilation with multiple sequence lengths, [Embedding model](https://github.com/quic/efficient-transformers/pull/424).
 
-# Initialize profiler
-profiler = QEffMemoryProfiler(verbose=True)
-profiler.start_monitoring()
+<details>
+<summary>More</summary>
 
-# Your QEfficient workflow
-model = QEFFAutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
-model.export()
-model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16)
-output = model.generate(prompts=["Hello world"])
+- [04/2025] Support for [SpD, multiprojection heads](https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding). Implemented post-attention hidden size projections to speculate tokens ahead of the base model
+- [04/2025] [QNN Compilation support](https://github.com/quic/efficient-transformers/pull/374) for AutoModel classes. QNN compilation capabilities for multi-models, embedding models and causal models.
+- [04/2025] Added support for separate prefill and decode compilation for encoder (vision) and language models. This feature will be utilized for [disaggregated serving](https://github.com/quic/efficient-transformers/pull/365).
+- [04/2025] SwiftKV Support for both [continuous and non-continuous batching execution](https://github.com/quic/efficient-transformers/pull/367) in SwiftKV.
+- [04/2025] Support for [GGUF model execution](https://github.com/quic/efficient-transformers/pull/368) (without quantized weights) 
+- [04/2025] Enabled FP8 model support on [replicate_kv_heads script](https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head)
+- [04/2025] Added support for [gradient checkpointing](https://github.com/quic/efficient-transformers/pull/338) in the finetuning script
+- [04/2025] Added support of model `ibm-granite/granite-vision-3.2-2b`[ibm-granite/granite-vision-3.2-2b](https://huggingface.co/ibm-granite/granite-vision-3.2-2b)
+- [03/2025] Added support for swiftkv model [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)
+- [02/2025] [VLMs support](https://github.com/quic/efficient-transformers/pull/267) added for the models [InternVL-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B), [Llava](https://huggingface.co/llava-hf/llava-1.5-7b-hf) and [Mllama](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)
+- [01/2025] [FP8 models support](https://huggingface.co/collections/neuralmagic/fp8-llms-for-vllm-666742ed2b78b7ac8df13127) Added support for inference of FP8 models.
 
-# Generate report and visualization
-profiler.stop_monitoring()
-print(profiler.get_memory_report())
-profiler.generate_memory_graph("profile.png")
-```
+- [01/2025] Added support for [Ibm-Granite] (https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)
+- [11/2024] [finite adapters support](https://github.com/quic/efficient-transformers/pull/153) allows mixed adapter usage for peft models.
+- [11/2024] [Speculative decoding TLM](https://github.com/quic/efficient-transformers/pull/119) QEFFAutoModelForCausalLM model can be compiled for returning more than 1 logits during decode for TLM.
+- [11/2024] Added support for [Meta-Llama-3.3-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct), [Meta-Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and [Meta-Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B)
+- [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported <br>
+- [09/2024] Now we support [PEFT](https://huggingface.co/docs/peft/index) models
+- [01/2025] Added support for [Ibm-Granite] (https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)
+- [01/2025] Added support for [Ibm-Granite-Guardian] (https://huggingface.co/ibm-granite/granite-guardian-3.1-8b)
+- [09/2024] Added support for [Gemma-2-Family](https://huggingface.co/collections/google/gemma-2-release-667d6600fd5220e7b967f315)<br>
+- [09/2024] Added support for [CodeGemma-Family](https://huggingface.co/collections/google/codegemma-release-66152ac7b683e2667abdee11)
+- [09/2024] Added support for [Gemma-Family](https://huggingface.co/collections/google/gemma-release-65d5efbccdbb8c4202ec078b)
+- [09/2024] Added support for [Meta-Llama-3.1-8B](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B)
+- [09/2024] Added support for [Meta-Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct)
+- [09/2024] Added support for [Meta-Llama-3.1-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct)
+- [09/2024] Added support for [granite-20b-code-base](https://huggingface.co/ibm-granite/granite-20b-code-base-8k)
+- [09/2024] Added support for [granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k)
+- [09/2024] Added support for [Starcoder1-15B](https://huggingface.co/bigcode/starcoder)
+- [08/2024] Added support for inference optimization technique ```continuous batching```
+- [08/2024] Added support for [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b)
+- [08/2024] Added support for [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat)
+- [08/2024] Added support for [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b)
+- [06/2024] Added support for [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
+- [06/2024] Added support for [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
+- [06/2024] Added support for [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
+- [06/2024] Added support for [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
+- [06/2024] Added support for [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)
+- [06/2024] Added support for [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
+- [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) & [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1).
+- [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
+</details>
 
-## Configuration
+# Overview
 
-### Basic Configuration
+## Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain
 
-```python
-profiler = QEffMemoryProfiler(
-    sampling_interval=0.1,           # Sample every 100ms
-    output_file="my_profile.png",    # Custom output file
-    verbose=True,                    # Enable detailed logging
-    enable_cpu_monitoring=True,      # Monitor CPU usage
-    enable_disk_monitoring=True,     # Monitor disk I/O
-)
-```
+This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AI 100.
+There are several models which can be directly transformed from a pre-trained original form to a deployment ready optimized form.
+For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).
 
-### Manual Operation Marking
+## Typically for LLMs, the library provides:
+1. Reimplemented blocks from Transformers <link> which enable efficient on-device retention of intermediate states.
+2. Graph transformations to enable execution of key operations in lower precision
+3. Graph transformations to replace some operations to other mathematically equivalent operations
+4. Handling for under-flows and overflows in lower precision
+5. Patcher modules to map weights of original model's operations to updated model's operations
+6. Exporter module to export the model source into a `ONNX` Graph.
+7. Sample example applications and demo notebooks
+8. Unit test templates. 
 
-```python
-profiler = QEffMemoryProfiler()
-profiler.start_monitoring()
-
-# Manual operation marking
-profiler.mark_operation("Custom Operation 1")
-# ... your code ...
-
-profiler.mark_operation("Custom Operation 2")
-# ... more code ...
-
-profiler.stop_monitoring()
-```
-
-## API Reference
-
-### QEffMemoryProfiler
-
-#### Constructor Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `sampling_interval` | `float` | `0.05` | Time between samples (seconds) |
-| `output_file` | `str` | `"qeff_memory_profile.png"` | Output file path |
-| `verbose` | `bool` | `False` | Enable verbose logging |
-| `enable_cpu_monitoring` | `bool` | `True` | Monitor CPU usage |
-| `enable_disk_monitoring` | `bool` | `True` | Monitor disk I/O |
-
-#### Methods
-
-- **`start_monitoring()`**: Start background monitoring
-- **`stop_monitoring()`**: Stop monitoring and mark completion
-- **`mark_operation(name: str)`**: Manually mark operation start
-- **`get_memory_report() -> str`**: Generate comprehensive text report
-- **`generate_memory_graph(filename: str)`**: Create visualization
-- **`stop_and_save(filename: str) -> str`**: Convenience method to stop and save
-
-#### Properties
-
-- **`peak_rss`**: Peak RSS memory usage (MB)
-- **`peak_operation`**: Operation during peak memory
-- **`samples`**: List of collected profiling samples
-- **`operations`**: List of marked operations with timestamps
-
-## Operation Types
-
-The profiler supports marking these common QEfficient operations:
-
-- **Model Loading**: `from_pretrained`, `AutoModel`, `AutoTokenizer`
-- **Export**: `model.export()`, ONNX transforms, PyTorch transforms
-- **Compilation**: `model.compile()`, QNN compilation
-- **Generation**: `model.generate()`, inference execution
-- **Cleanup**: Memory cleanup, garbage collection
-
-## Output
-
-### Console Report
-```
-QEFFICIENT PERFORMANCE MONITORING REPORT
-============================================================
-Peak Memory Usage:
-   • RSS (Physical): 18.7 GB at 14:23:45
-   • Peak during:    Compilation
-
-Memory Statistics:
-   • Current RSS:    16.2 GB (Delta: +15.8 GB)
-   • Duration:       185.3 seconds
-   • Operations:     4
-
-QEfficient Operations Timeline:
-    1.    0.0s - Model Loading (25.2s) [+8.2 GB]
-    2.   25.2s - Export (15.4s) [+2.1 GB]
-    3.   40.6s - Compilation (120.8s) [+6.3 GB] <- Peak
-    4.  161.4s - Generation (18.7s) [+1.2 GB]
-```
-
-### Visualization
-
-The profiler generates a comprehensive 4-panel visualization:
-
-1. **Memory Timeline**: RSS usage with colored operation phases
-2. **CPU Usage**: CPU utilization with performance zones
-3. **Disk I/O**: Read/write activity per operation phase
-4. **Phase Duration**: Timing analysis with duration labels
-
-#### Sample Output
-
-![Sample Memory Profile](memory_profile_llama3.2.png)
-
-*Example memory profiling output showing QEfficient workflow phases including model loading, ONNX transforms, compilation, and generation phases with detailed memory, CPU, and disk I/O metrics.*
-
-## Advanced Usage
+**It is mandatory for each Pull Request to include tests such as**:
+1. If the PR is for adding support for a model, the tests should include successful execution of the model post changes (the changes included as part of PR) on Pytorch and ONNXRT. Successful exit criteria is MSE between output of original model and updated model.
+2. If the PR modifies any common utilities, tests need to be included to execute tests of all models included in the library.
 
 
-### Accessing Raw Data
+## Quick Installation
+```bash
 
-```python
-# Get synchronized data arrays
-data = profiler.get_synchronized_data()
-timestamps = data['timestamps']
-memory_usage = data['rss_memory']
-cpu_usage = data['cpu_usage']
+# Create Python virtual env and activate it. (Recommended Python 3.10)
+sudo apt install python3.10-venv
+python3.10 -m venv qeff_env
+source qeff_env/bin/activate
+pip install -U pip
 
-# Access individual samples
-for sample in profiler.samples:
-    print(f"Time: {sample.timestamp}, RSS: {sample.rss_mb} MB")
-```
+# Clone and Install the QEfficient Repo.
+pip install git+https://github.com/quic/efficient-transformers
 
-## Integration Examples
+# Or build wheel package using the below command.
+pip install build wheel
+python -m build --wheel --outdir dist
+pip install dist/qefficient-0.0.1.dev0-py3-none-any.whl
 
-### With Existing QEfficient Scripts
+``` 
 
-```python
-# Add to existing QEfficient workflow
-profiler = QEffMemoryProfiler(output_file="workflow_profile.png")
-profiler.start_monitoring()
-
-# Existing QEfficient code unchanged
-model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
-# ... rest of workflow ...
-
-# Add at end
-report = profiler.stop_and_save()
-print(report)
-```
+For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/installation.html)
 
 
-## Limitations
+## Documentation
 
-### Disk I/O Tracking
+* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
+* [Python API](https://quic.github.io/efficient-transformers/source/hl_api.html)
+* [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html)
+* [Models coming soon](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon)
 
-**Subprocess I/O Limitation**: Disk I/O tracking captures parent process I/O only. Subprocess I/O (e.g., compilation reading ONNX files via `subprocess.run()`) is not captured due to Linux I/O accounting limitations. During compilation phases, expect lower I/O readings than actual file operations performed by subprocesses.
+> Note: More details are here: https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Model-Architecture-Support/Large-Language-Models/llm/
 
-## Compatibility
+## Acknowledgements
+Thanks to:
+* HuggingFace transformers for work in LLM GenAI modeling implementation
+*  ONNX, Pytorch,  ONNXruntime community.
 
-- **Python**: 3.7+
-- **Dependencies**: `psutil`, `matplotlib`, `numpy`
+## Support
+If you run into any problems with the code, please file Github issues directly to this repo.
+
+## Contributing
+This project welcomes contributions and suggestions. Please check the License. Integration with a CLA Bot is underway. 
